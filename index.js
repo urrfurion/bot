@@ -50,6 +50,7 @@ const scenes = {
     edit_app_scene: answerHandler('edit_app_scene'),
     set_timer_scene: answerHandler('set_timer_scene'),
     edit_app_code_scene: answerHandler('edit_app_code_scene'),
+    delete_data_scene: answerHandler('delete_data_scene'),
     
     // User scenes
     verify_channels_scene: answerHandler('verify_channels_scene')
@@ -153,11 +154,16 @@ function generateCode(prefix = '', length = 8) {
 
 // Check Admin Status
 async function isAdmin(userId) {
-    if (ADMIN_IDS.includes(Number(userId))) return true;
+    const userIdNum = Number(userId);
+    if (ADMIN_IDS.includes(userIdNum)) return true;
+    
     try {
         const config = await db.collection('admin').findOne({ type: 'config' });
         return config?.admins?.some(id => String(id) === String(userId)) || false;
-    } catch (e) { return false; }
+    } catch (e) { 
+        console.error("Admin check error:", e);
+        return false; 
+    }
 }
 
 // Get Unjoined Channels
@@ -294,14 +300,24 @@ async function showStartScreen(ctx) {
     channelButtons.push([{ text: '✅ Verify All Channels' }]);
     
     try {
-        await ctx.replyWithPhoto(imageUrl, {
-            caption: formatVariables(startMessage, ctx.from),
-            parse_mode: 'Markdown',
-            reply_markup: {
-                keyboard: channelButtons,
-                resize_keyboard: true
-            }
-        });
+        if (startImage) {
+            await ctx.replyWithPhoto(imageUrl, {
+                caption: formatVariables(startMessage, ctx.from),
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: channelButtons,
+                    resize_keyboard: true
+                }
+            });
+        } else {
+            await ctx.reply(formatVariables(startMessage, ctx.from), {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    keyboard: channelButtons,
+                    resize_keyboard: true
+                }
+            });
+        }
     } catch (e) {
         await ctx.reply(formatVariables(startMessage, ctx.from), {
             parse_mode: 'Markdown',
@@ -476,11 +492,16 @@ async function handleAppSelection(ctx, app) {
 }
 
 // ==========================================
-// 🛡️ ADMIN PANEL
+// 🛡️ ADMIN PANEL - FIXED
 // ==========================================
 
 bot.command('adminpanel', async (ctx) => {
-    if (!await isAdmin(ctx.from.id)) {
+    console.log("Admin panel command received from:", ctx.from.id);
+    
+    const isAdminUser = await isAdmin(ctx.from.id);
+    console.log("Is admin?", isAdminUser);
+    
+    if (!isAdminUser) {
         await ctx.reply("❌ You are not authorized to access admin panel.");
         return;
     }
@@ -495,7 +516,8 @@ bot.command('adminpanel', async (ctx) => {
         [{ text: '📝 Menu Message', callback_data: 'admin_menu_message' }],
         [{ text: '⏰ Code Timer', callback_data: 'admin_timer' }],
         [{ text: '📺 Manage Channels', callback_data: 'admin_channels' }],
-        [{ text: '📱 Manage Apps', callback_data: 'admin_apps' }]
+        [{ text: '📱 Manage Apps', callback_data: 'admin_apps' }],
+        [{ text: '🗑️ Delete Data', callback_data: 'admin_delete_data' }]
     ];
     
     await ctx.replyWithMarkdown(text, { 
@@ -516,12 +538,174 @@ bot.action('admin_back', async (ctx) => {
         [{ text: '📝 Menu Message', callback_data: 'admin_menu_message' }],
         [{ text: '⏰ Code Timer', callback_data: 'admin_timer' }],
         [{ text: '📺 Manage Channels', callback_data: 'admin_channels' }],
-        [{ text: '📱 Manage Apps', callback_data: 'admin_apps' }]
+        [{ text: '📱 Manage Apps', callback_data: 'admin_apps' }],
+        [{ text: '🗑️ Delete Data', callback_data: 'admin_delete_data' }]
     ];
     
     await ctx.replyWithMarkdown(text, { 
         reply_markup: { inline_keyboard: keyboard } 
     });
+});
+
+// Delete Data Menu
+bot.action('admin_delete_data', async (ctx) => {
+    const text = "🗑️ *Delete Data*\n\n⚠️ *WARNING: This cannot be undone!*\n\nSelect what to delete:";
+    const keyboard = [
+        [{ text: '🗑️ Delete All Users', callback_data: 'delete_all_users' }],
+        [{ text: '🗑️ Delete All Channels', callback_data: 'delete_all_channels' }],
+        [{ text: '🗑️ Delete All Apps', callback_data: 'delete_all_apps' }],
+        [{ text: '🔥 Delete EVERYTHING', callback_data: 'delete_everything' }],
+        [{ text: '🔙 Back', callback_data: 'admin_back' }]
+    ];
+    
+    await ctx.editMessageText(text, { 
+        parse_mode: 'Markdown', 
+        reply_markup: { inline_keyboard: keyboard } 
+    });
+});
+
+// Delete All Users
+bot.action('delete_all_users', async (ctx) => {
+    const text = "🗑️ *Delete All Users*\n\n⚠️ This will delete ALL user data including:\n- User profiles\n- Join history\n- Code timestamps\n\nAre you sure?";
+    const keyboard = [
+        [{ text: '✅ Yes, Delete All Users', callback_data: 'confirm_delete_all_users' }],
+        [{ text: '❌ Cancel', callback_data: 'admin_delete_data' }]
+    ];
+    
+    await ctx.editMessageText(text, { 
+        parse_mode: 'Markdown', 
+        reply_markup: { inline_keyboard: keyboard } 
+    });
+});
+
+bot.action('confirm_delete_all_users', async (ctx) => {
+    try {
+        const result = await db.collection('info').deleteMany({});
+        await ctx.answerCbQuery(`✅ Deleted ${result.deletedCount} users!`);
+        await ctx.editMessageText(`✅ Successfully deleted ${result.deletedCount} users!`, {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_delete_data' }]] }
+        });
+    } catch (e) {
+        await ctx.answerCbQuery('❌ Error deleting users');
+        await ctx.editMessageText('❌ Error deleting users. Please try again.', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_delete_data' }]] }
+        });
+    }
+});
+
+// Delete All Channels
+bot.action('delete_all_channels', async (ctx) => {
+    const text = "🗑️ *Delete All Channels*\n\n⚠️ This will delete ALL channel data.\nUsers will NOT need to join channels anymore.\n\nAre you sure?";
+    const keyboard = [
+        [{ text: '✅ Yes, Delete All Channels', callback_data: 'confirm_delete_all_channels' }],
+        [{ text: '❌ Cancel', callback_data: 'admin_delete_data' }]
+    ];
+    
+    await ctx.editMessageText(text, { 
+        parse_mode: 'Markdown', 
+        reply_markup: { inline_keyboard: keyboard } 
+    });
+});
+
+bot.action('confirm_delete_all_channels', async (ctx) => {
+    try {
+        await db.collection('admin').updateOne(
+            { type: 'config' },
+            { $set: { channels: [] } }
+        );
+        await ctx.answerCbQuery('✅ All channels deleted!');
+        await ctx.editMessageText('✅ Successfully deleted all channels!', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_delete_data' }]] }
+        });
+    } catch (e) {
+        await ctx.answerCbQuery('❌ Error deleting channels');
+        await ctx.editMessageText('❌ Error deleting channels. Please try again.', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_delete_data' }]] }
+        });
+    }
+});
+
+// Delete All Apps
+bot.action('delete_all_apps', async (ctx) => {
+    const text = "🗑️ *Delete All Apps*\n\n⚠️ This will delete ALL app data including:\n- App names\n- Code settings\n- App images\n\nAre you sure?";
+    const keyboard = [
+        [{ text: '✅ Yes, Delete All Apps', callback_data: 'confirm_delete_all_apps' }],
+        [{ text: '❌ Cancel', callback_data: 'admin_delete_data' }]
+    ];
+    
+    await ctx.editMessageText(text, { 
+        parse_mode: 'Markdown', 
+        reply_markup: { inline_keyboard: keyboard } 
+    });
+});
+
+bot.action('confirm_delete_all_apps', async (ctx) => {
+    try {
+        await db.collection('admin').updateOne(
+            { type: 'config' },
+            { $set: { apps: [] } }
+        );
+        await ctx.answerCbQuery('✅ All apps deleted!');
+        await ctx.editMessageText('✅ Successfully deleted all apps!', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_delete_data' }]] }
+        });
+    } catch (e) {
+        await ctx.answerCbQuery('❌ Error deleting apps');
+        await ctx.editMessageText('❌ Error deleting apps. Please try again.', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_delete_data' }]] }
+        });
+    }
+});
+
+// Delete Everything
+bot.action('delete_everything', async (ctx) => {
+    const text = "🔥 *DELETE EVERYTHING*\n\n⚠️ *EXTREME WARNING: This will delete ALL data including:*\n- All users\n- All channels\n- All apps\n- All settings\n- Everything!\n\n❗ *This cannot be undone!*\n\nAre you absolutely sure?";
+    const keyboard = [
+        [{ text: '🔥 YES, DELETE EVERYTHING', callback_data: 'confirm_delete_everything' }],
+        [{ text: '❌ NO, Cancel', callback_data: 'admin_delete_data' }]
+    ];
+    
+    await ctx.editMessageText(text, { 
+        parse_mode: 'Markdown', 
+        reply_markup: { inline_keyboard: keyboard } 
+    });
+});
+
+bot.action('confirm_delete_everything', async (ctx) => {
+    try {
+        // Delete users collection
+        const userResult = await db.collection('info').deleteMany({});
+        
+        // Reset admin config to defaults
+        await db.collection('admin').updateOne(
+            { type: 'config' },
+            { 
+                $set: { 
+                    type: 'config',
+                    admins: ADMIN_IDS,
+                    channels: [],
+                    apps: [],
+                    startImage: 'https://res.cloudinary.com/dneusgyzc/image/upload/l_text:Stalinist%20One_140_bold:{name},co_rgb:00e5ff,g_center/fl_preserve_transparency/v1763670359/1000106281_cfg1ke.jpg',
+                    startMessage: '👋 *Welcome! We are Premium Agents.*\n\n⚠️ _Access Denied_\nTo access our exclusive agent list, you must join our affiliate channels below:',
+                    menuImage: 'https://res.cloudinary.com/dneusgyzc/image/upload/l_text:Stalinist%20One_140_bold:{name},co_rgb:00e5ff,g_center/fl_preserve_transparency/v1763670359/1000106281_cfg1ke.jpg',
+                    menuMessage: '🎉 *Welcome to the Agent Panel!*\n\n✅ _Verification Successful_\nSelect an app below to generate codes:',
+                    codeTimer: 7200
+                }
+            },
+            { upsert: true }
+        );
+        
+        await ctx.answerCbQuery('✅ Everything deleted!');
+        await ctx.editMessageText(`🔥 *COMPLETE DATA WIPE COMPLETED!*\n\n✅ Deleted ${userResult.deletedCount} users\n✅ Reset all settings to defaults\n✅ All data has been erased!\n\nThe bot is now fresh and empty.`, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_back' }]] }
+        });
+    } catch (e) {
+        await ctx.answerCbQuery('❌ Error deleting data');
+        await ctx.editMessageText('❌ Error deleting everything. Please try again.', {
+            reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'admin_delete_data' }]] }
+        });
+    }
 });
 
 // 1. Start Image Management
@@ -1299,43 +1483,6 @@ scenes.add_app_scene.on('text', async (ctx) => {
     }
 });
 
-// Edit App Code Scene
-scenes.edit_app_code_scene.on('text', async (ctx) => {
-    if (!ctx.scene.state.step) {
-        const appId = ctx.scene.state.appId;
-        const config = await db.collection('admin').findOne({ type: 'config' });
-        const app = config.apps.find(a => a.id === appId);
-        
-        if (!app) {
-            await ctx.reply("App not found");
-            return ctx.scene.leave();
-        }
-        
-        ctx.scene.state.app = app;
-        ctx.scene.state.step = 'select';
-        
-        let text = `⚙️ *Edit Code Settings for ${app.name}*\n\n`;
-        text += `Current settings:\n`;
-        text += `- Code count: ${app.codeCount}\n`;
-        for (let i = 0; i < app.codeCount; i++) {
-            text += `- Code ${i+1}: Prefix "${app.codePrefixes[i] || 'none'}", Length ${app.codeLengths[i]}\n`;
-        }
-        text += `\nSelect what to edit:`;
-        
-        const keyboard = [
-            [{ text: '✏️ Edit Code Count', callback_data: 'edit_count' }],
-            [{ text: '✏️ Edit Prefixes', callback_data: 'edit_prefixes' }],
-            [{ text: '✏️ Edit Lengths', callback_data: 'edit_lengths' }],
-            [{ text: '🔙 Back', callback_data: 'admin_apps' }]
-        ];
-        
-        await ctx.reply(text, {
-            parse_mode: 'Markdown',
-            reply_markup: { inline_keyboard: keyboard }
-        });
-    }
-});
-
 // Broadcast
 bot.action('admin_broadcast', async (ctx) => {
     await ctx.reply("📢 Send message to broadcast (text, photo, or document):");
@@ -1370,7 +1517,8 @@ bot.action('admin_userdata', async (ctx) => {
     const total = users.length;
     const joined = users.filter(u => u.joinedAll).length;
     const activeToday = users.filter(u => {
-        const lastActive = u.lastActive ? new Date(u.lastActive) : new Date(0);
+        if (!u.lastActive) return false;
+        const lastActive = new Date(u.lastActive);
         const today = new Date();
         return lastActive.toDateString() === today.toDateString();
     }).length;
@@ -1382,7 +1530,7 @@ bot.action('admin_userdata', async (ctx) => {
     
     if (users.length > 0) {
         text += `*Recent Users:*\n`;
-        users.slice(-10).forEach((user, i) => {
+        users.slice(-10).reverse().forEach((user, i) => {
             const name = user.username ? `@${user.username}` : user.first_name || `User ${user.user}`;
             text += `${i+1}. ${name} - ${user.joinedAll ? '✅' : '❌'}\n`;
         });
