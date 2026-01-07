@@ -539,6 +539,7 @@ async function handleAppSelection(ctx, app) {
 // 🛡️ ADMIN PANEL - FIXED
 // ==========================================
 
+// Handle /adminpanel command
 bot.command('adminpanel', async (ctx) => {
     console.log("Admin panel command received from:", ctx.from.id);
     
@@ -564,14 +565,21 @@ bot.command('adminpanel', async (ctx) => {
         [{ text: '🗑️ Delete Data', callback_data: 'admin_delete_data' }]
     ];
     
+    // Send as a new message (not reply)
     await ctx.replyWithMarkdown(text, { 
         reply_markup: { inline_keyboard: keyboard } 
     });
 });
 
-// Back button handler for admin
-bot.action('admin_back', async (ctx) => {
-    await ctx.deleteMessage();
+// Also handle "adminpanel" as text (in case they type it without slash)
+bot.hears('adminpanel', async (ctx) => {
+    const isAdminUser = await isAdmin(ctx.from.id);
+    
+    if (!isAdminUser) {
+        await ctx.reply("❌ You are not authorized to access admin panel.");
+        return;
+    }
+    
     const text = "👮‍♂️ *Admin Control Panel*\n\nSelect an option below:";
     const keyboard = [
         [{ text: '📢 Broadcast', callback_data: 'admin_broadcast' }],
