@@ -143,6 +143,123 @@ async function initBot() {
 }
 
 // ==========================================
+// JOIN REQUEST HANDLER - AUTOMATIC APPROVAL
+// ==========================================
+
+bot.on('chat_join_request', async (ctx) => {
+    try {
+        const chatJoinRequest = ctx.chatJoinRequest;
+        const userId = chatJoinRequest.from.id;
+        const chatId = chatJoinRequest.chat.id;
+        
+        console.log(`Join request from user ${userId} to channel ${chatId}`);
+        
+        // Check if this channel is in our bot's channel list
+        const config = await db.collection('admin').findOne({ type: 'config' });
+        const channel = config?.channels?.find(ch => String(ch.id) === String(chatId));
+        
+        if (channel) {
+            try {
+                // Automatically approve the join request
+                await ctx.approveChatJoinRequest(chatId, userId);
+                console.log(`✅ Approved join request for user ${userId} to channel ${chatId}`);
+                
+                // Update user's joined status
+                await db.collection('users').updateOne(
+                    { userId: userId },
+                    { $set: { lastActive: new Date() } }
+                );
+                
+                // Send notification to admins
+                const user = await db.collection('users').findOne({ userId: userId });
+                const userInfo = user?.username ? `@${user.username}` : user?.firstName || `User ${userId}`;
+                
+                await notifyAdmin(
+                    `✅ *Auto-Approved Join Request*\n\n` +
+                    `• Channel: ${channel.title || channel.buttonLabel}\n` +
+                    `• User: ${userInfo}\n` +
+                    `• ID: \`${userId}\``
+                );
+                
+            } catch (error) {
+                console.error(`❌ Failed to approve join request: ${error.message}`);
+                // Try to decline if approval failed
+                try {
+                    await ctx.declineChatJoinRequest(chatId, userId);
+                } catch (declineError) {
+                    console.error(`❌ Failed to decline join request: ${declineError.message}`);
+                }
+            }
+        } else {
+            console.log(`Channel ${chatId} not found in bot's channel list. Ignoring join request.`);
+        }
+    } catch (error) {
+        console.error('Error in chat_join_request handler:', error);
+    }
+});
+
+// ==========================================
+// ENHANCED CHANNEL CHECKING
+// ==========================================
+
+// Update getUnjoinedChannels function to handle join requests better
+async function getUnjoinedChannels(userId) {
+    try {
+        const config = await db.collection('admin').findOne({ type: 'config' });
+        if (!config || !config.channels || config.channels.length === 0) return [];
+        
+        const unjoined = [];
+        
+        for (const channel of config.channels) {
+            try {
+                // For channels where bot is admin, check membership
+                if (channel.isBotAdmin) {
+                    try {
+                        const member = await bot.telegram.getChatMember(channel.id, userId);
+                        if (member.status === 'left' || member.status === 'kicked') {
+                            unjoined.push(channel);
+                        }
+                    } catch (error) {
+                        // If we can't check, assume not joined
+                        unjoined.push(channel);
+                    }
+                } else {
+                    // For channels where bot is not admin, always show join button
+                    unjoined.push(channel);
+                }
+            } catch (error) {
+                console.error(`Error checking channel ${channel.id}:`, error.message);
+                unjoined.push(channel);
+            }
+        }
+        
+        return unjoined;
+    } catch (error) {
+        console.error('Error in getUnjoinedChannels:', error);
+        return [];
+    }
+}
+
+// ==========================================
+// UPDATE CHANNEL ADDING TO SET isBotAdmin
+// ==========================================
+
+// Update the add channel flow to check and set isBotAdmin properly
+// In the scenes.addChannelId.on() function, add this check:
+
+// After getting chat info, update the channel creation:
+const newChannel = {
+    id: chat.id,
+    title: chat.title || 'Unknown Channel',
+    buttonLabel: buttonLabel,
+    link: link,
+    type: chat.username ? 'public' : 'private',
+    username: chat.username,
+    isBotAdmin: isBotAdmin, // Add this line
+    addedAt: new Date()
+};
+
+// ==========================================
 // HELPER FUNCTIONS
 // ==========================================
 
